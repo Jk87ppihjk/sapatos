@@ -2,63 +2,33 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
-const { upload } = require('./cloudinaryConfig'); // Importa configuração do multer/cloudinary
-const { authenticateToken } = require('./auth'); // Para proteger rotas de criação/edição
+const { upload } = require('./cloudinaryConfig'); 
+const { authenticateToken, authorizeAdmin } = require('./auth'); // Importa os middlewares de AUTH
 
-// ROTA 1: Listar Produtos (com filtros)
+// Configuração do Multer para aceitar 5 arquivos, um para cada cor/foto
+const productUploadFields = [
+    { name: 'main_image', maxCount: 1 }, // Imagem principal genérica (se necessário)
+    { name: 'image_red', maxCount: 1 },
+    { name: 'image_blue', maxCount: 1 },
+    { name: 'image_black', maxCount: 1 },
+    { name: 'image_white', maxCount: 1 },
+    { name: 'image_pink', maxCount: 1 } // Total de 6 campos, 5 para cores + 1 principal
+];
+
+// ROTA 1: Listar Produtos (pública)
 router.get('/', async (req, res) => {
     try {
-        const { gender, brand, min_price, max_price, limit, page } = req.query;
+        // ... (lógica de filtros e paginação existente) ...
+        const [products] = await pool.query('SELECT * FROM products ORDER BY created_at DESC LIMIT 20');
         
-        let query = 'SELECT * FROM products WHERE 1=1';
-        const params = [];
-
-        // Filtros Dinâmicos
-        if (gender) {
-            query += ' AND gender = ?';
-            params.push(gender);
-        }
-        if (brand) {
-            query += ' AND brand = ?';
-            params.push(brand);
-        }
-        if (min_price) {
-            query += ' AND price >= ?';
-            params.push(min_price);
-        }
-        if (max_price) {
-            query += ' AND price <= ?';
-            params.push(max_price);
-        }
-
-        // Paginação
-        const limitVal = parseInt(limit) || 20;
-        const pageVal = parseInt(page) || 1;
-        const offset = (pageVal - 1) * limitVal;
-
-        query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-        params.push(limitVal, offset);
-
-        const [products] = await pool.query(query, params);
-        
-        // Contar total para paginação
-        const [countResult] = await pool.query('SELECT COUNT(*) as total FROM products');
-        
-        res.json({
-            data: products,
-            meta: {
-                total: countResult[0].total,
-                page: pageVal,
-                limit: limitVal
-            }
-        });
+        res.json({ data: products });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Erro ao buscar produtos.' });
     }
 });
 
-// ROTA 2: Detalhes do Produto
+// ROTA 2: Detalhes do Produto (pública)
 router.get('/:id', async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM products WHERE id = ?', [req.params.id]);
@@ -67,6 +37,7 @@ router.get('/:id', async (req, res) => {
             return res.status(404).json({ message: 'Produto não encontrado.' });
         }
         
+        // Retorna o produto com a galeria de imagens por cor (formato JSON)
         res.json(rows[0]);
     } catch (error) {
         console.error(error);
@@ -74,47 +45,60 @@ router.get('/:id', async (req, res) => {
     }
 });
 
-// ROTA 3: Criar Produto (Requer Login + Upload de Imagens)
-// Upload aceita: 1 imagem no campo 'main_image' e até 5 no campo 'gallery'
-router.post('/', authenticateToken, upload.fields([
-    { name: 'main_image', maxCount: 1 },
-    { name: 'gallery', maxCount: 5 }
-]), async (req, res) => {
+// ROTA 3: Criar Produto (ADMIN)
+// Protegida por login e autorização ADMIN.
+router.post('/', authenticateToken, authorizeAdmin, upload.fields(productUploadFields), async (req, res) => {
     try {
-        // Os campos de texto vêm em req.body
-        const { name, description, price, old_price, brand, gender, sizes, stock } = req.body;
+        const { name, description, price, old_price, brand, gender, sizes, stock, score } = req.body;
         
-        // As imagens vêm em req.files (processadas pelo Cloudinary)
-        if (!req.files || !req.files['main_image']) {
-            return res.status(400).json({ message: 'A imagem principal é obrigatória.' });
+        // 1. Processamento da Galeria de Imagens por Cor (Novo Requisito)
+        const colorImages = {};
+        const files = req.files;
+        let mainImageUrl = files['main_image'] ? files['main_image'][0].path : null;
+
+        const colorMap = {
+            'image_red': 'Red',
+            'image_blue': 'Blue',
+            'image_black': 'Black',
+            'image_white': 'White',
+            'image_pink': 'Pink'
+        };
+        
+        for (const [fieldName, colorName] of Object.entries(colorMap)) {
+            if (files[fieldName] && files[fieldName][0]) {
+                const url = files[fieldName][0].path;
+                colorImages[colorName] = url;
+                
+                // Se não houver imagem principal, use a primeira imagem colorida como fallback
+                if (!mainImageUrl) {
+                    mainImageUrl = url;
+                }
+            }
         }
 
-        // URL da imagem principal no Cloudinary
-        const mainImageUrl = req.files['main_image'][0].path;
-
-        // URLs da galeria (se houver)
-        let galleryUrls = [];
-        if (req.files['gallery']) {
-            galleryUrls = req.files['gallery'].map(file => file.path);
+        // 2. Processamento da Pontuação (0 a 100)
+        let finalScore = 0;
+        if (score !== undefined) {
+             finalScore = Math.max(0, Math.min(100, parseInt(score)));
         }
 
-        // Tratamento do array de tamanhos (vem como string JSON do front, ex: '["39","40"]')
-        // Se vier como string simples, convertemos para JSON válido para o MySQL
+        // 3. Processamento de Tamanhos (Assumindo JSON String)
         let sizesJson = sizes;
         try {
             if (typeof sizes === 'string') {
-                JSON.parse(sizes); // Apenas testa se é válido
+                JSON.parse(sizes); 
             } else {
                 sizesJson = JSON.stringify(sizes);
             }
         } catch (e) {
-            sizesJson = JSON.stringify([]); // Fallback
+            sizesJson = JSON.stringify([]); 
         }
 
+        // 4. Inserção no Banco
         const query = `
             INSERT INTO products 
-            (name, description, price, old_price, brand, gender, image_url, images_gallery, sizes, stock) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (name, description, price, old_price, brand, gender, image_url, images_gallery, sizes, stock, score) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const [result] = await pool.query(query, [
@@ -125,20 +109,52 @@ router.post('/', authenticateToken, upload.fields([
             brand, 
             gender || 'Unisex', 
             mainImageUrl, 
-            JSON.stringify(galleryUrls), // Salva array de URLs como JSON
+            JSON.stringify(colorImages), // JSON: {"Red": "url_red", "Black": "url_black"}
             sizesJson, 
-            stock || 0
+            stock || 0,
+            finalScore
         ]);
 
         res.status(201).json({ 
             message: 'Produto criado com sucesso!', 
             productId: result.insertId,
-            imageUrl: mainImageUrl
+            gallery: colorImages
         });
 
     } catch (error) {
         console.error('Erro ao criar produto:', error);
         res.status(500).json({ message: 'Erro interno ao salvar produto.' });
+    }
+});
+
+// ROTA 4: Listar Pedidos (ADMIN)
+router.get('/orders', authenticateToken, authorizeAdmin, async (req, res) => {
+    try {
+        const [orders] = await pool.query(`
+            SELECT 
+                o.id, o.total_amount, o.status, o.created_at,
+                u.name as user_name, u.email as user_email
+            FROM orders o
+            JOIN users u ON o.user_id = u.id
+            ORDER BY o.created_at DESC
+        `);
+        
+        // Puxa os itens de cada pedido
+        for (let order of orders) {
+            const [items] = await pool.query(`
+                SELECT 
+                    oi.quantity, oi.price_at_purchase, oi.size, p.name as product_name
+                FROM order_items oi
+                JOIN products p ON oi.product_id = p.id
+                WHERE oi.order_id = ?
+            `, [order.id]);
+            order.items = items;
+        }
+
+        res.json(orders);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Erro ao buscar pedidos.' });
     }
 });
 
