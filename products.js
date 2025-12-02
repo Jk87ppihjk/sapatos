@@ -171,4 +171,33 @@ router.post('/', authenticateToken, authorizeAdmin, upload.fields(productUploadF
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
-        const [result] = await pool.query(query,
+        const [result] = await pool.query(query, [
+            name, 
+            description || null, 
+            price, 
+            old_price || null, 
+            brand || null, 
+            gender || 'Unisex', // Salva o gênero
+            mainImageUrl, 
+            galleryJson, // JSON: {"Cor": "url"}
+            sizesJson, 
+            stock || 0,
+            finalScore
+        ]);
+
+        res.status(201).json({ 
+            message: 'Produto criado com sucesso!', 
+            productId: result.insertId,
+            main_image_url: mainImageUrl 
+        });
+
+    } catch (error) {
+        console.error('Erro ao criar produto:', error);
+        res.status(500).json({ message: 'Erro interno ao salvar produto.' });
+    }
+});
+
+// ROTA 4: Listar Pedidos (A rota para listar pedidos de Admin deve ser mantida no admin.js)
+// Sua estrutura original está no admin.js, mantendo a separação.
+
+module.exports = router;
