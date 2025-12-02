@@ -15,9 +15,9 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
-        folder: 'shoe-store-uploads', // Nome da pasta no seu Cloudinary
+        folder: 'shoe-store-uploads',
         allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
-        transformation: [{ width: 1000, height: 1000, crop: 'limit' }] // Otimização básica opcional
+        transformation: [{ width: 1000, height: 1000, crop: 'limit' }]
     },
 });
 
