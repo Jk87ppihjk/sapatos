@@ -7,6 +7,7 @@ const { upload } = require('./cloudinaryConfig'); // Importa o configurador de u
 // --- BANNERS ---
 
 // LISTAR BANNERS (Público - Usado pelo Front End)
+// Rota: GET /api/admin/banners
 router.get('/banners', async (req, res) => {
     try {
         // Busca apenas banners marcados como ativos, se houver essa coluna
@@ -17,8 +18,8 @@ router.get('/banners', async (req, res) => {
     }
 });
 
-// CRIAR BANNER (Admin) - AGORA COM UPLOAD DE FICHEIRO
-// 'banner_image' é o nome do campo <input type="file" name="banner_image"> no HTML
+// CRIAR BANNER (Admin)
+// Rota: POST /api/admin/banners
 router.post('/banners', authenticateToken, authorizeAdmin, upload.single('banner_image'), async (req, res) => {
     try {
         const { link_url, title } = req.body;
@@ -31,6 +32,7 @@ router.post('/banners', authenticateToken, authorizeAdmin, upload.single('banner
         const image_url = req.file.path; // URL final do Cloudinary
 
         // Insere na base de dados
+        // Assumindo que a coluna 'active' existe na tabela 'banners'
         const [result] = await pool.query(
             'INSERT INTO banners (image_url, link_url, title, active) VALUES (?, ?, ?, 1)', 
             [image_url, link_url || null, title || null]
@@ -49,6 +51,7 @@ router.post('/banners', authenticateToken, authorizeAdmin, upload.single('banner
 });
 
 // APAGAR BANNER (Admin)
+// Rota: DELETE /api/admin/banners/:id
 router.delete('/banners/:id', authenticateToken, authorizeAdmin, async (req, res) => {
     try {
         const { id } = req.params;
@@ -59,6 +62,83 @@ router.delete('/banners/:id', authenticateToken, authorizeAdmin, async (req, res
         }
         
         res.json({ message: 'Banner removido!' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// --- PRODUTOS (ADMIN) ---
+
+// LISTAR TODOS OS PRODUTOS (Admin)
+// Rota: GET /api/admin/products?all=true
+router.get('/products', authenticateToken, authorizeAdmin, async (req, res) => {
+    try {
+        // Assume que a tabela 'products' tem a coluna 'is_visible' (ou similar)
+        const [products] = await pool.query('SELECT * FROM products ORDER BY id DESC');
+        res.json({ data: products });
+    } catch (error) {
+        console.error('Erro ao buscar todos os produtos (admin):', error);
+        res.status(500).json({ message: 'Erro ao buscar produtos.' });
+    }
+});
+
+
+// ATUALIZAR VISIBILIDADE DO PRODUTO (Admin)
+// Rota: PATCH /api/admin/products/:id/visibility
+router.patch('/products/:id/visibility', authenticateToken, authorizeAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { is_visible } = req.body;
+        
+        if (is_visible === undefined || (is_visible !== 0 && is_visible !== 1)) {
+            return res.status(400).json({ message: 'Status de visibilidade inválido. Use 0 (Oculto) ou 1 (Visível).' });
+        }
+
+        // is_visible deve ser um novo campo na tabela 'products' (assumindo que existe)
+        const [result] = await pool.query(
+            'UPDATE products SET is_visible = ? WHERE id = ?', 
+            [is_visible, id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Produto não encontrado.' });
+        }
+        
+        res.json({ message: 'Visibilidade do produto atualizada com sucesso!' });
+    } catch (error) {
+        console.error('Erro ao atualizar visibilidade:', error);
+        res.status(500).json({ error: 'Erro interno ao atualizar visibilidade do produto.' });
+    }
+});
+
+// DELETAR PRODUTO (Admin)
+// Rota: DELETE /api/admin/products/:id
+router.delete('/products/:id', authenticateToken, authorizeAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [result] = await pool.query('DELETE FROM products WHERE id = ?', [id]);
+        
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Produto não encontrado.' });
+        }
+        
+        res.json({ message: 'Produto removido com sucesso!' });
+    } catch (error) {
+        console.error('Erro ao deletar produto:', error);
+        res.status(500).json({ error: 'Erro interno ao deletar produto.' });
+    }
+});
+
+// --- PEDIDOS (ORDERS) ---
+
+// LISTAR PEDIDOS (Admin)
+// Rota: GET /api/admin/orders
+router.get('/orders', authenticateToken, authorizeAdmin, async (req, res) => {
+    try {
+        // Busca todos os pedidos (simplificado)
+        // A coluna 'status' deve existir na tabela 'orders'
+        const [rows] = await pool.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 50');
+        res.json(rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
