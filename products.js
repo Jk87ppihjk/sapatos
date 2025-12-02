@@ -36,10 +36,10 @@ const processGallery = (galleryImages, galleryColors) => {
 
 
 // ----------------------------------------------------------------------
-// ROTA 1: Listar Produtos (pública) - AGORA COM FILTRO POR GÊNERO E PESQUISA
+// ROTA 1: Listar Produtos (pública) - AGORA COM FILTRO POR GÊNERO, TAMANHO E MARCA
 // ----------------------------------------------------------------------
 router.get('/', async (req, res) => {
-    // Captura os parâmetros de consulta do URL (gender, search, etc.)
+    // Captura os parâmetros de consulta do URL (gender, search, brand, size)
     const { gender, search, brand, size } = req.query; 
 
     let query = 'SELECT * FROM products';
@@ -65,9 +65,24 @@ router.get('/', async (req, res) => {
         const searchPattern = `%${search}%`;
         params.push(searchPattern, searchPattern, searchPattern);
     }
+
+    // 3. Filtro de MARCA (Brand) - Aceita marcas separadas por vírgula (frontend envia "Nike,Adidas")
+    if (brand) {
+        const brands = brand.split(',').map(b => b.trim());
+        if (brands.length > 0) {
+            // Cria uma condição OR para múltiplas marcas
+            const brandConditions = brands.map(() => 'brand = ?').join(' OR ');
+            conditions.push(`(${brandConditions})`);
+            params.push(...brands);
+        }
+    }
     
-    // NOTA: Filtros por 'brand' e 'size' precisariam de lógica SQL mais complexa
-    // usando cláusulas LIKE/JSON_CONTAINS, que ainda não estão implementadas.
+    // 4. Filtro de TAMANHO (Size - Requer JSON_CONTAINS para a coluna 'sizes')
+    if (size) {
+        // JSON_QUOTE garante que o valor seja tratado como string dentro do array JSON
+        conditions.push('JSON_CONTAINS(sizes, JSON_QUOTE(?))');
+        params.push(size);
+    }
 
     // Constrói a cláusula WHERE
     if (conditions.length > 0) {
@@ -127,7 +142,6 @@ router.post('/', authenticateToken, authorizeAdmin, upload.fields(productUploadF
         const galleryJson = processGallery(galleryFiles, gallery_colors);
         
         // 2. Fallback para Imagem Principal
-        // Se não houver main_image, usa o primeiro da galeria
         if (!mainImageUrl && galleryFiles.length > 0) {
             mainImageUrl = galleryFiles[0].path;
         }
@@ -157,38 +171,4 @@ router.post('/', authenticateToken, authorizeAdmin, upload.fields(productUploadF
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
-        const [result] = await pool.query(query, [
-            name, 
-            description || null, 
-            price, 
-            old_price || null, 
-            brand || null, 
-            gender || 'Unisex', // Salva o gênero
-            mainImageUrl, 
-            galleryJson, // JSON: {"Cor": "url"}
-            sizesJson, 
-            stock || 0,
-            finalScore
-        ]);
-
-        res.status(201).json({ 
-            message: 'Produto criado com sucesso!', 
-            productId: result.insertId,
-            main_image_url: mainImageUrl 
-        });
-
-    } catch (error) {
-        console.error('Erro ao criar produto:', error);
-        res.status(500).json({ message: 'Erro interno ao salvar produto.' });
-    }
-});
-
-// ROTA 4: Listar Pedidos (A rota para listar pedidos de Admin deve ser mantida no admin.js, se existir)
-// Esta rota é um placeholder, confirme onde ela está no seu projeto.
-/*
-router.get('/orders', authenticateToken, authorizeAdmin, async (req, res) => {
-    // ... lógica para buscar pedidos
-});
-*/
-
-module.exports = router;
+        const [result] = await pool.query(query,
