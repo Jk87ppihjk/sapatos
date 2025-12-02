@@ -30,7 +30,7 @@ async function initDatabase() {
             )
         `);
 
-        // 2. Tabela de Produtos (Adicionado 'score' e 'old_price' para Promoção)
+        // 2. Tabela de Produtos (ADICIONADO is_visible)
         await connection.query(`
             CREATE TABLE IF NOT EXISTS products (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -45,6 +45,7 @@ async function initDatabase() {
                 sizes JSON,
                 stock INT DEFAULT 0,
                 score INT DEFAULT 0,
+                is_visible TINYINT(1) DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
