@@ -1,3 +1,4 @@
+// db.js
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
@@ -16,7 +17,7 @@ async function initDatabase() {
         const connection = await pool.getConnection();
         console.log('✅ Conectado ao MySQL com sucesso.');
 
-        // 1. Usuários
+        // 1. Tabela de Usuários (Adicionado role para Admin)
         await connection.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -29,7 +30,7 @@ async function initDatabase() {
             )
         `);
 
-        // 2. Produtos
+        // 2. Tabela de Produtos (Adicionado 'score' e 'old_price' para Promoção)
         await connection.query(`
             CREATE TABLE IF NOT EXISTS products (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -48,7 +49,7 @@ async function initDatabase() {
             )
         `);
 
-        // 3. Pedidos
+        // 3. Tabela de Pedidos (Ajustado para Guest Checkout, Mercado Pago e Shipping Details)
         await connection.query(`
             CREATE TABLE IF NOT EXISTS orders (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -64,7 +65,7 @@ async function initDatabase() {
             )
         `);
 
-        // 4. Itens do Pedido
+        // 4. Itens do Pedido (Adicionado 'color' e 'size')
         await connection.query(`
             CREATE TABLE IF NOT EXISTS order_items (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -78,8 +79,8 @@ async function initDatabase() {
                 FOREIGN KEY (product_id) REFERENCES products(id)
             )
         `);
-
-        // 5. Banners
+        
+        // 5. Tabela de Banners
         await connection.query(`
             CREATE TABLE IF NOT EXISTS banners (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -90,7 +91,7 @@ async function initDatabase() {
             )
         `);
 
-        // 6. Cupons
+        // 6. Tabela de Cupons
         await connection.query(`
             CREATE TABLE IF NOT EXISTS coupons (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -101,7 +102,7 @@ async function initDatabase() {
             )
         `);
 
-        // 7. Configurações do Site
+        // 7. Tabela de Configurações do Site (COM AS NOVAS CORES DE FUNDO)
         await connection.query(`
             CREATE TABLE IF NOT EXISTS site_config (
                 id INT NOT NULL DEFAULT 1,
@@ -114,15 +115,17 @@ async function initDatabase() {
             )
         `);
 
-        // Inserir configuração padrão se não existir
+        // 8. Insere configuração padrão se não existir
         await connection.query(`
-            INSERT IGNORE INTO site_config (id, site_name) VALUES (1, 'SoleMates')
+            INSERT IGNORE INTO site_config (id, site_name, primary_color, secondary_color, bg_light, bg_dark) 
+            VALUES (1, 'SoleMates', '#e94c20', '#FF69B4', '#f8f6f6', '#1A1A1A')
         `);
 
         console.log('✅ Tabelas verificadas/criadas com sucesso.');
         connection.release();
     } catch (error) {
-        console.error('❌ Erro no Banco de Dados:', error);
+        console.error('❌ Erro ao inicializar o banco de dados:', error);
+        process.exit(1);
     }
 }
 
