@@ -1,38 +1,39 @@
-// payment.js
+// payment.js (COMPLETO E CORRIGIDO PARA CHECKOUT DE CONVIDADO)
 const express = require('express');
 const router = express.Router();
 // Importação da SDK oficial v2 do Mercado Pago
 const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
 const pool = require('./db');
-const { authenticateToken } = require('./auth');
+// const { authenticateToken } = require('./auth'); // Removido para permitir Guest Checkout
 require('dotenv').config();
 
 // Configuração do Cliente Mercado Pago
+// Certifique-se que MP_ACCESS_TOKEN esteja no seu .env
 const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
-// ROTA 1: Criar Preferência (Checkout Transparente)
-// O Front End envia os itens do carrinho e recebe o ID da preferência
-router.post('/create_preference', authenticateToken, async (req, res) => {
+// ROTA 1: Criar Preferência (Checkout de Convidado)
+// Recebe items, email do comprador e o total final.
+router.post('/create_preference', async (req, res) => {
     try {
-        const { items } = req.body;
-        const user = req.user; // Obtido do middleware authenticateToken
-
-        if (!items || items.length === 0) {
-            return res.status(400).json({ message: 'O carrinho está vazio.' });
+        // Recebe o carrinho e os dados do comprador (guest)
+        const { items, guestEmail, totalAmount, shippingDetails } = req.body;
+        
+        if (!items || items.length === 0 || !guestEmail || !totalAmount) {
+            return res.status(400).json({ message: 'Dados inválidos. Carrinho, email ou total ausentes.' });
         }
-
+        
         // 1. Formata os itens para o padrão do Mercado Pago
         const mpItems = items.map(item => ({
             id: item.id.toString(),
-            title: item.title, // Nome do produto
+            title: `${item.name} (Tam: ${item.size} / Cor: ${item.color})`, // Nome mais detalhado
             quantity: Number(item.quantity),
             unit_price: Number(item.price),
             currency_id: 'BRL'
         }));
-
-        // 2. Calcula o total para salvar no banco
-        const totalAmount = items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
-
+        
+        // 2. Prepara dados adicionais para envio
+        const externalReference = `ORDER-${Date.now()}-${Math.floor(Math.random() * 1000)}`; // ID único para rastreio
+        
         // 3. Cria a preferência no Mercado Pago
         const preference = new Preference(client);
         
@@ -40,26 +41,26 @@ router.post('/create_preference', authenticateToken, async (req, res) => {
             body: {
                 items: mpItems,
                 payer: {
-                    email: user.email,
-                    // Se tiver nome no token/banco, pode enviar:
-                    // name: user.name 
+                    email: guestEmail,
+                    name: shippingDetails.fullName.split(' ')[0], // Nome
+                    surname: shippingDetails.fullName.split(' ').slice(1).join(' '), // Sobrenome
                 },
+                external_reference: externalReference, // Usado para ligar o pagamento ao pedido
                 back_urls: {
-                    success: `${process.env.FRONTEND_URL}/success.html`,
-                    failure: `${process.env.FRONTEND_URL}/failure.html`,
-                    pending: `${process.env.FRONTEND_URL}/pending.html`
+                    success: `${process.env.FRONTEND_URL}/success.html?order_ref=${externalReference}`,
+                    failure: `${process.env.FRONTEND_URL}/failure.html?order_ref=${externalReference}`,
+                    pending: `${process.env.FRONTEND_URL}/pending.html?order_ref=${externalReference}`
                 },
                 auto_return: 'approved',
-                // URL onde o Mercado Pago vai avisar que o pagamento mudou de status
                 notification_url: `${process.env.BACKEND_URL}/api/payment/webhook`
             }
         });
-
+        
         // 4. Salva o pedido inicial no Banco de Dados (Status: Pending)
-        // Isso garante que temos um registro antes mesmo do cliente pagar
+        // user_id é NULL para convidado
         const [orderResult] = await pool.query(
-            `INSERT INTO orders (user_id, total_amount, status, preference_id) VALUES (?, ?, 'pending', ?)`,
-            [user.id, totalAmount, result.id]
+            `INSERT INTO orders (user_id, total_amount, status, preference_id, external_reference, shipping_details) VALUES (?, ?, 'pending', ?, ?, ?)`,
+            [null, totalAmount, result.id, externalReference, JSON.stringify(shippingDetails)]
         );
 
         const orderId = orderResult.insertId;
@@ -70,53 +71,60 @@ router.post('/create_preference', authenticateToken, async (req, res) => {
             item.id, 
             item.quantity, 
             item.price, 
-            item.size || 'N/A'
+            item.size || 'N/A',
+            item.color || 'Padrão'
         ]);
 
+        // Assumindo que a tabela order_items tem as colunas color e size
         await pool.query(
-            `INSERT INTO order_items (order_id, product_id, quantity, price_at_purchase, size) VALUES ?`,
+            `INSERT INTO order_items (order_id, product_id, quantity, price_at_purchase, size, color) VALUES ?`,
             [itemValues]
         );
 
         // Retorna o ID da preferência para o Front End renderizar o componente
         res.json({ 
             preferenceId: result.id, 
-            orderId: orderId 
+            orderId: orderId,
+            externalReference: externalReference
         });
 
     } catch (error) {
         console.error('Erro ao criar preferência MP:', error);
-        res.status(500).json({ message: 'Erro ao processar pagamento.' });
+        res.status(500).json({ message: 'Erro ao processar pagamento.', detail: error.message });
     }
 });
 
 // ROTA 2: Webhook (Recebe atualizações do Mercado Pago)
-// Esta rota é chamada automaticamente pelos servidores do Mercado Pago
+// Webhook precisa ser ajustado para procurar pelo external_reference
 router.post('/webhook', async (req, res) => {
-    const { type, data } = req.body;
-    const queryId = req.query['data.id'] || data?.id; // Tenta pegar o ID do pagamento
+    const topic = req.query.topic || req.query.type;
+    const queryId = req.query['data.id'] || req.body?.data?.id;
 
     try {
-        if (type === 'payment' || req.query.type === 'payment') {
+        if (topic === 'payment' && queryId) {
             const payment = new Payment(client);
             
-            // Consulta o status atual do pagamento na API do Mercado Pago
-            const paymentData = await payment.get({ id: queryId });
+            const paymentData = await payment.get({ id: Number(queryId) });
             
-            const status = paymentData.status; // ex: approved, rejected, pending
-            const externalReference = paymentData.external_reference; // Se você usou isso
+            const status = paymentData.status; 
+            const externalReference = paymentData.external_reference;
             
-            console.log(`🔔 Webhook recebido. Pagamento ${queryId} está: ${status}`);
+            console.log(`🔔 Webhook recebido. Pagamento ${queryId} (Ref: ${externalReference}) está: ${status}`);
 
-            // Atualiza o status no banco de dados baseado no ID do pagamento
-            // Como no create_preference salvamos o preference_id, aqui teríamos que 
-            // fazer uma lógica para vincular o payment_id ao order_id.
-            // Simplificação: Vamos tentar atualizar se tivermos o ID da preferência ou salvar o payment_id agora.
-            
-            // Nota: Para produção perfeita, recomenda-se salvar o `external_reference` como o ID do pedido na criação da preferência.
-            
-            // Exemplo genérico de atualização (ajuste conforme lógica de negócio):
-            // await pool.query('UPDATE orders SET status = ?, payment_id = ? WHERE preference_id = ...', [status, queryId]);
+            // Mapeia o status do MP para o status do seu banco
+            let dbStatus = 'pending';
+            if (status === 'approved') {
+                dbStatus = 'approved';
+            } else if (status === 'rejected' || status === 'cancelled') {
+                dbStatus = 'rejected';
+            }
+
+            // Atualiza o status no banco de dados usando a referência externa
+            await pool.query(
+                'UPDATE orders SET status = ?, payment_id = ? WHERE external_reference = ?', 
+                [dbStatus, queryId, externalReference]
+            );
+
         }
         
         res.sendStatus(200); // MP exige resposta 200 OK
