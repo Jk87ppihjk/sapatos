@@ -5,10 +5,10 @@ const pool = require('./db');
 const { upload } = require('./cloudinaryConfig'); // Para upload de imagens
 const { authenticateToken, authorizeAdmin } = require('./auth'); // Para rotas de admin
 
-// Configuração do Multer: 1 imagem principal + até 5 imagens genéricas para a galeria
+// Configuração do Multer: 1 imagem principal + até 10 imagens genéricas para a galeria (AUMENTADO)
 const productUploadFields = [
     { name: 'main_image', maxCount: 1 },
-    { name: 'gallery_images', maxCount: 5 }
+    { name: 'gallery_images', maxCount: 10 } // LIMITE DE 10 IMAGENS DE GALERIA
 ];
 
 // Função auxiliar para processar a galeria de cores e imagens
@@ -24,7 +24,8 @@ const processGallery = (galleryImages, galleryColors) => {
         }
 
         galleryImages.forEach((file, index) => {
-            const color = colors[index] ? colors[index].trim() : `Cor ${index + 1}`;
+            // Se o modo for "Produto Único", a cor será "Default" ou "Cor 1", etc.
+            const color = colors[index] ? colors[index].trim() : (galleryImages.length === 1 ? 'Default' : `Cor ${index + 1}`);
             if (color) {
                 // Salva no formato {"Cor": "url_da_imagem"}
                 colorImages[color] = file.path; 
