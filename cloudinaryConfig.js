@@ -1,6 +1,10 @@
-// cloudinaryConfig.js
+// cloudinaryConfig.js - CORRIGIDO
 const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+
+// CORREÇÃO AQUI: Importa o pacote inteiro, e a propriedade CloudinaryStorage é acessada.
+// Para garantir a compatibilidade com a v2.2.1, usamos essa sintaxe.
+const { CloudinaryStorage } = require('multer-storage-cloudinary'); 
+
 const multer = require('multer');
 require('dotenv').config();
 
@@ -11,7 +15,7 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Configuração do armazenamento
+// A linha 15 (onde o erro ocorria) agora está correta.
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
