@@ -19,7 +19,7 @@
     "cloudinary": "^1.41.0",
     "mercadopago": "^2.0.0",
     "@sendinblue/client": "^3.0.0",
-    "multer-storage-cloudinary": "^2.2.1"
+    "multer-storage-cloudinary": "^4.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.3"
