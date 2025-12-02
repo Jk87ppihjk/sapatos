@@ -1,10 +1,6 @@
-// cloudinaryConfig.js - CORRIGIDO
+// cloudinaryConfig.js
 const cloudinary = require('cloudinary').v2;
-
-// CORREÇÃO AQUI: Importa o pacote inteiro, e a propriedade CloudinaryStorage é acessada.
-// Para garantir a compatibilidade com a v2.2.1, usamos essa sintaxe.
-const { CloudinaryStorage } = require('multer-storage-cloudinary'); 
-
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 require('dotenv').config();
 
@@ -15,13 +11,15 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// A linha 15 (onde o erro ocorria) agora está correta.
+// Configuração do armazenamento
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: 'shoe-store-uploads',
         allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
-        transformation: [{ width: 1000, height: 1000, crop: 'limit' }]
+        // A transformação na v4 pode exigir uma sintaxe específica, 
+        // mas para teste inicial vamos manter simples ou remover se der erro de parâmetro.
+        // transformation: [{ width: 1000, height: 1000, crop: 'limit' }] 
     },
 });
 
