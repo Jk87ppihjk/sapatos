@@ -3,24 +3,18 @@ const express = require('express');
 const router = express.Router();
 const pool = require('./db');
 const { upload } = require('./cloudinaryConfig'); 
-const { authenticateToken, authorizeAdmin } = require('./auth'); // Importa os middlewares de AUTH
+const { authenticateToken, authorizeAdmin } = require('./auth'); 
 
-// Configuração do Multer para aceitar 5 arquivos, um para cada cor/foto
+// Configuração do Multer: 1 imagem principal + até 5 imagens genéricas para a galeria
 const productUploadFields = [
-    { name: 'main_image', maxCount: 1 }, // Imagem principal genérica (se necessário)
-    { name: 'image_red', maxCount: 1 },
-    { name: 'image_blue', maxCount: 1 },
-    { name: 'image_black', maxCount: 1 },
-    { name: 'image_white', maxCount: 1 },
-    { name: 'image_pink', maxCount: 1 } // Total de 6 campos, 5 para cores + 1 principal
+    { name: 'main_image', maxCount: 1 },
+    { name: 'gallery_images', maxCount: 5 } 
 ];
 
 // ROTA 1: Listar Produtos (pública)
 router.get('/', async (req, res) => {
     try {
-        // ... (lógica de filtros e paginação existente) ...
         const [products] = await pool.query('SELECT * FROM products ORDER BY created_at DESC LIMIT 20');
-        
         res.json({ data: products });
     } catch (error) {
         console.error(error);
@@ -37,7 +31,6 @@ router.get('/:id', async (req, res) => {
             return res.status(404).json({ message: 'Produto não encontrado.' });
         }
         
-        // Retorna o produto com a galeria de imagens por cor (formato JSON)
         res.json(rows[0]);
     } catch (error) {
         console.error(error);
@@ -45,36 +38,46 @@ router.get('/:id', async (req, res) => {
     }
 });
 
-// ROTA 3: Criar Produto (ADMIN)
-// Protegida por login e autorização ADMIN.
+// ROTA 3: Criar Produto (ADMIN) - Suporta Cores Dinâmicas
 router.post('/', authenticateToken, authorizeAdmin, upload.fields(productUploadFields), async (req, res) => {
     try {
-        const { name, description, price, old_price, brand, gender, sizes, stock, score } = req.body;
+        const { 
+            name, description, price, old_price, brand, gender, sizes, stock, score, 
+            gallery_colors // NOVO: Array JSON de cores enviadas pelo Front End
+        } = req.body;
         
-        // 1. Processamento da Galeria de Imagens por Cor (Novo Requisito)
+        // 1. Processamento da Galeria de Imagens por Cor (DINÂMICO)
         const colorImages = {};
         const files = req.files;
         let mainImageUrl = files['main_image'] ? files['main_image'][0].path : null;
 
-        const colorMap = {
-            'image_red': 'Red',
-            'image_blue': 'Blue',
-            'image_black': 'Black',
-            'image_white': 'White',
-            'image_pink': 'Pink'
-        };
-        
-        for (const [fieldName, colorName] of Object.entries(colorMap)) {
-            if (files[fieldName] && files[fieldName][0]) {
-                const url = files[fieldName][0].path;
-                colorImages[colorName] = url;
-                
-                // Se não houver imagem principal, use a primeira imagem colorida como fallback
-                if (!mainImageUrl) {
-                    mainImageUrl = url;
-                }
+        // Tenta parsear o JSON das cores
+        let colorsArray = [];
+        if (gallery_colors) {
+            try {
+                // gallery_colors virá como string JSON
+                colorsArray = JSON.parse(gallery_colors); 
+            } catch (e) {
+                console.error("Erro ao parsear gallery_colors:", gallery_colors);
             }
         }
+        
+        const galleryFiles = files['gallery_images'] || [];
+
+        // Mapeia os arquivos enviados com os nomes das cores dinâmicas
+        galleryFiles.forEach((file, index) => {
+            const color = colorsArray[index] ? colorsArray[index].trim() : `Cor ${index + 1}`;
+            
+            // Garante que a cor seja válida (não vazia)
+            if (color) {
+                colorImages[color] = file.path;
+            }
+            
+            // Define o mainImageUrl se for o primeiro arquivo e não houver um principal
+            if (!mainImageUrl && index === 0) {
+                mainImageUrl = file.path;
+            }
+        });
 
         // 2. Processamento da Pontuação (0 a 100)
         let finalScore = 0;
@@ -82,7 +85,7 @@ router.post('/', authenticateToken, authorizeAdmin, upload.fields(productUploadF
              finalScore = Math.max(0, Math.min(100, parseInt(score)));
         }
 
-        // 3. Processamento de Tamanhos (Assumindo JSON String)
+        // 3. Processamento de Tamanhos
         let sizesJson = sizes;
         try {
             if (typeof sizes === 'string') {
@@ -109,7 +112,7 @@ router.post('/', authenticateToken, authorizeAdmin, upload.fields(productUploadF
             brand, 
             gender || 'Unisex', 
             mainImageUrl, 
-            JSON.stringify(colorImages), // JSON: {"Red": "url_red", "Black": "url_black"}
+            JSON.stringify(colorImages), // JSON: {"Nome da Cor": "url_x", ...}
             sizesJson, 
             stock || 0,
             finalScore
@@ -139,7 +142,6 @@ router.get('/orders', authenticateToken, authorizeAdmin, async (req, res) => {
             ORDER BY o.created_at DESC
         `);
         
-        // Puxa os itens de cada pedido
         for (let order of orders) {
             const [items] = await pool.query(`
                 SELECT 
