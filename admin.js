@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../db');
+const pool = require('./db');
 
 // Middleware simples para verificar se é Admin (Opcional, mas recomendado)
 // Você pode remover isso se quiser testar sem login por enquanto
