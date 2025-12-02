@@ -1,144 +1,110 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
+const { authenticateToken, authorizeAdmin } = require('./auth');
+const { upload } = require('./cloudinaryConfig'); // Importa o configurador de upload (para banner file upload)
 
-// Middleware simples para verificar se é Admin (Opcional, mas recomendado)
-// Você pode remover isso se quiser testar sem login por enquanto
-const isAdmin = async (req, res, next) => {
-    // Aqui você validaria o token e se user.role === 'admin'
-    // Por enquanto, vamos deixar passar para facilitar seus testes
-    next();
-};
+// --- BANNERS ---
 
-// ==========================================
-// 1. GERENCIAMENTO DE PRODUTOS (Editar, Apagar, Promoção)
-// ==========================================
-
-// EDITAR PRODUTO (Atualizar preços, promoção, nome, etc)
-router.put('/products/:id', isAdmin, async (req, res) => {
-    const { id } = req.params;
-    const { name, description, price, old_price, stock, image_url } = req.body;
-
-    // LÓGICA DE PROMOÇÃO:
-    // Se você enviar o "old_price" maior que "price", o front-end mostrará como promoção.
-    // Ex: price: 100, old_price: 150 -> "De R$150 por R$100"
-
-    try {
-        await pool.query(
-            `UPDATE products SET 
-             name = ?, description = ?, price = ?, old_price = ?, stock = ?, image_url = ?
-             WHERE id = ?`,
-            [name, description, price, old_price || null, stock, image_url, id]
-        );
-        res.json({ message: 'Produto atualizado com sucesso!' });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Erro ao atualizar produto' });
-    }
-});
-
-// APAGAR PRODUTO
-router.delete('/products/:id', isAdmin, async (req, res) => {
-    const { id } = req.params;
-    try {
-        await pool.query('DELETE FROM products WHERE id = ?', [id]);
-        res.json({ message: 'Produto removido com sucesso!' });
-    } catch (error) {
-        res.status(500).json({ error: 'Erro ao apagar produto' });
-    }
-});
-
-
-// ==========================================
-// 2. GERENCIAMENTO DE BANNERS
-// ==========================================
-
-// LISTAR BANNERS (Público - Front-end usa isso)
+// LISTAR BANNERS (Público - Usado pelo Front End)
 router.get('/banners', async (req, res) => {
     try {
-        const [rows] = await pool.query('SELECT * FROM banners WHERE active = 1');
+        // Busca apenas banners marcados como ativos, se houver essa coluna
+        const [rows] = await pool.query('SELECT * FROM banners WHERE active = 1 ORDER BY id DESC');
         res.json(rows);
     } catch (error) {
-        res.status(500).json({ error: 'Erro ao buscar banners' });
+        res.status(500).json({ error: error.message });
     }
 });
 
-// CRIAR BANNER (Admin)
-router.post('/banners', isAdmin, async (req, res) => {
-    const { image_url, link_url, title } = req.body;
+// CRIAR BANNER (Admin) - AGORA COM UPLOAD DE FICHEIRO
+// 'banner_image' é o nome do campo <input type="file" name="banner_image"> no HTML
+router.post('/banners', authenticateToken, authorizeAdmin, upload.single('banner_image'), async (req, res) => {
     try {
-        await pool.query(
-            'INSERT INTO banners (image_url, link_url, title) VALUES (?, ?, ?)',
-            [image_url, link_url, title]
+        const { link_url, title } = req.body;
+        
+        // Verifica se o ficheiro foi anexado e o Cloudinary retornou a URL
+        if (!req.file) {
+            return res.status(400).json({ message: 'Erro: O ficheiro de imagem do banner é obrigatório.' });
+        }
+        
+        const image_url = req.file.path; // URL final do Cloudinary
+
+        // Insere na base de dados
+        const [result] = await pool.query(
+            'INSERT INTO banners (image_url, link_url, title, active) VALUES (?, ?, ?, 1)', 
+            [image_url, link_url || null, title || null]
         );
-        res.json({ message: 'Banner adicionado!' });
+        
+        res.status(201).json({ 
+            message: 'Banner criado e imagem enviada com sucesso!', 
+            bannerId: result.insertId,
+            image_url: image_url 
+        });
+
     } catch (error) {
-        res.status(500).json({ error: 'Erro ao criar banner' });
+        console.error('Erro ao criar banner:', error);
+        res.status(500).json({ error: 'Erro interno ao processar o upload do banner.' });
     }
 });
 
 // APAGAR BANNER (Admin)
-router.delete('/banners/:id', isAdmin, async (req, res) => {
+router.delete('/banners/:id', authenticateToken, authorizeAdmin, async (req, res) => {
     try {
-        await pool.query('DELETE FROM banners WHERE id = ?', [req.params.id]);
+        const { id } = req.params;
+        const [result] = await pool.query('DELETE FROM banners WHERE id = ?', [id]);
+        
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Banner não encontrado.' });
+        }
+        
         res.json({ message: 'Banner removido!' });
     } catch (error) {
-        res.status(500).json({ error: 'Erro ao remover banner' });
+        res.status(500).json({ error: error.message });
     }
 });
 
 
-// ==========================================
-// 3. GERENCIAMENTO DE CUPONS
-// ==========================================
+// --- CUPONS ---
 
 // CRIAR CUPOM (Admin)
-router.post('/coupons', isAdmin, async (req, res) => {
+router.post('/coupons', authenticateToken, authorizeAdmin, async (req, res) => {
     const { code, discount_percent, expiration_date } = req.body;
-    // Ex: code="NATAL10", discount_percent=10
     try {
-        await pool.query(
-            'INSERT INTO coupons (code, discount_percent, expiration_date) VALUES (?, ?, ?)',
-            [code.toUpperCase(), discount_percent, expiration_date]
+        const [result] = await pool.query(
+            'INSERT INTO coupons (code, discount_percent, expiration_date) VALUES (?, ?, ?)', 
+            [code.toUpperCase(), discount_percent, expiration_date || null]
         );
-        res.json({ message: 'Cupom criado com sucesso!' });
-    } catch (error) {
-        if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(400).json({ message: 'Este código de cupom já existe.' });
+        res.status(201).json({ message: 'Cupom criado!', couponId: result.insertId });
+    } catch (e) {
+        console.error(e);
+        // Erro 1062 é DUPLICATE ENTRY
+        if (e.code === 'ER_DUP_ENTRY') {
+             return res.status(400).json({ message: 'Código de cupom já existe.' });
         }
-        res.status(500).json({ error: 'Erro ao criar cupom' });
+        res.status(500).json({ message: 'Erro ao criar cupom.' });
     }
 });
 
-// VALIDAR CUPOM (Público - Usado no Checkout)
+// Validar Cupom (Público - Usado pelo Front End)
 router.post('/coupons/validate', async (req, res) => {
     const { code } = req.body;
-    try {
-        const [rows] = await pool.query(
-            'SELECT * FROM coupons WHERE code = ? AND active = 1', 
-            [code.toUpperCase()]
-        );
-
-        if (rows.length === 0) {
-            return res.status(404).json({ valid: false, message: 'Cupom inválido.' });
-        }
-
-        const coupon = rows[0];
-        
-        // Verifica validade
-        if (coupon.expiration_date && new Date(coupon.expiration_date) < new Date()) {
-            return res.status(400).json({ valid: false, message: 'Cupom expirado.' });
-        }
-
-        res.json({ 
-            valid: true, 
-            discount_percent: coupon.discount_percent,
-            code: coupon.code 
-        });
-
-    } catch (error) {
-        res.status(500).json({ error: 'Erro ao validar cupom' });
+    const [rows] = await pool.query('SELECT * FROM coupons WHERE code = ? AND active = 1', [code.toUpperCase()]);
+    
+    if (rows.length === 0) {
+        return res.status(404).json({ valid: false, message: 'Inválido ou inativo.' });
     }
+    
+    const coupon = rows[0];
+    const now = new Date();
+    
+    if (coupon.expiration_date && new Date(coupon.expiration_date) < now) {
+        // Opcional: desativar o cupom expirado no DB aqui
+        return res.status(400).json({ valid: false, message: 'Expirado.' });
+    }
+    
+    res.json({ valid: true, discount_percent: coupon.discount_percent, code: coupon.code });
 });
+
 
 module.exports = router;
